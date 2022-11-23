@@ -15,15 +15,14 @@ class Fluent::InsightOutput < Fluent::BufferedOutput
   INSIGHT_LOGSETS_TEMPLATE = "/management/logsets/%{logset_id}"
   THREAD_COUNT = 4
 
-  config_param :use_ssl,     :bool,    :default => true
-  config_param :port,        :integer, :default => 20000
-  config_param :protocol,    :string,  :default => 'tcp'
-  config_param :max_retries, :integer, :default => 3
-  config_param :tags,        :string,  :default => ''
-  config_param :prefix,      :string,  :default => ''
-  config_param :default,     :string,  :default => 'default'
-  config_param :key,         :string,  :default => 'log'
-  config_param :message,     :string,  :default => 'message'
+  config_param :use_ssl,       :bool,    :default => true
+  config_param :use_json,      :bool,    :default => false
+  config_param :port,          :integer, :default => 20000
+  config_param :protocol,      :string,  :default => 'tcp'
+  config_param :max_retries,   :integer, :default => 3
+  config_param :tags,          :string,  :default => ''
+  config_param :prefix,        :string,  :default => ''
+  config_param :log_name,      :string,  :default => 'default'
   config_param :api_key
   config_param :logset_id
   config_param :region
@@ -81,8 +80,8 @@ class Fluent::InsightOutput < Fluent::BufferedOutput
 
   def insight_log_token(url)
     log_body = insight_rest_request(url)
-    if log_body.key?(@key)
-      log_info = log_body[@key]
+    if log_body.key?('log')
+      log_info = log_body['log']
       if log_info.key?('tokens')
         log.info "Found log #{log_info['name']}"
         return log_info['name'], log_info['tokens'][0]
@@ -120,22 +119,20 @@ class Fluent::InsightOutput < Fluent::BufferedOutput
     return if @tokens.empty?
     chunk.msgpack_each do |(tag, time, record)|
       next unless record.is_a? Hash
-      message = (record.delete(@message)&.to_s&.rstrip || '')
+      next unless @use_json or record.has_key? "message"
+      message = @use_json ? record.to_json : record["message"].rstrip()
       next if message.empty?
       @insight_tags.each { |k,v|
         @insight_tags[k] = record[k]
       }
       symbolized_tags = @insight_tags.inject({}){|memo,(k,v)| memo[k.to_sym] = v; memo}
-      if @tokens.key?(record[@key])
-        token = @tokens[record[@key]]
-        prefix = @prefix % symbolized_tags
-        send_insight(token,  "#{prefix} #{message}")
-      elsif @tokens.key?(@default)
-        token = @tokens[@default]
+
+      if @tokens.key?(@log_name)
+        token = @tokens[@log_name]
         prefix = @prefix % symbolized_tags
         send_insight(token,  "#{prefix} #{message}")
       else
-        log.debug "No token found for #{record[@key]} and default log doesn't exist"
+        log.debug "No token found for #{@log_name} and default log doesn't exist"
       end
     end
   end
